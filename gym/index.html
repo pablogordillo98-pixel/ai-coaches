@@ -614,28 +614,22 @@ async function fetchOneExercise(name) {
 }
 
 
-// jsDelivr CDN - allows cross-origin from any domain unlike raw.githubusercontent.com
-const FREE_DB_BASE = 'https://cdn.jsdelivr.net/gh/yuhonas/free-exercise-db@main';
-const FREE_DB_JSON = `${FREE_DB_BASE}/dist/exercises.json`;
+
+// ExerciseDB público en Vercel — sin RapidAPI, sin CORS
+const EDB_BASE = 'https://exercisedb-api.vercel.app/api/v1';
 let allExercises = null;
 
 const MUSCLE_MAP = {
-  chest:        ['chest','pectorals'],
-  back:         ['lats','middle back','lower back','traps'],
-  shoulders:    ['shoulders','delts'],
-  'upper arms': ['biceps','triceps'],
-  'lower arms': ['forearms'],
-  'upper legs': ['quadriceps','hamstrings','glutes','adductors','abductors'],
-  'lower legs': ['calves'],
-  waist:        ['abdominals'],
-  cardio:       ['cardiovascular system']
+  chest:        'pectorals',
+  back:         'lats',
+  shoulders:    'delts',
+  'upper arms': 'biceps',
+  'lower arms': 'forearms',
+  'upper legs': 'quadriceps',
+  'lower legs': 'calves',
+  waist:        'abdominals',
+  cardio:       'cardiovascular system'
 };
-
-// jsDelivr allows cross-origin, no proxy needed
-function imgUrl(rawUrl) {
-  if(!rawUrl) return null;
-  return rawUrl; // jsDelivr URLs work directly
-}
 
 function renderMuscleTabs() {
   document.getElementById('muscleTabs').innerHTML=MUSCLES.map(m=>
@@ -652,43 +646,47 @@ async function loadLibrary(muscleId) {
   if(libCache[muscleId]){renderLib(libCache[muscleId]);return;}
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
   try {
-    // Load full dataset once
-    if(!allExercises) {
-      const r=await fetch(FREE_DB_JSON);
-      if(!r.ok) throw new Error('No se pudo cargar la base de ejercicios');
-      allExercises=await r.json();
-    }
-    // Filter by muscle group
-    const targets=MUSCLE_MAP[muscleId]||[muscleId];
-    const filtered=allExercises.filter(ex=>
-      targets.some(t=>
-        (ex.primaryMuscles||[]).some(m=>m.toLowerCase().includes(t.toLowerCase())) ||
-        (ex.secondaryMuscles||[]).some(m=>m.toLowerCase().includes(t.toLowerCase()))
-      )
-    ).slice(0,40);
-
-    const exs=filtered.map(ex=>{
-      // Images are at: FREE_DB_BASE/exercises/{id}/{img}
-      const firstImg=ex.images?.[0];
-      const gifUrl=firstImg ? `${FREE_DB_BASE}/exercises/${ex.id}/${firstImg}` : null;
-      return {
-        name: ex.name,
-        gifUrl,
-        allImages: (ex.images||[]).map(img=>`${FREE_DB_BASE}/exercises/${ex.id}/${img}`),
-        target: ex.primaryMuscles?.[0]||muscleId,
-        equipment: ex.equipment||'',
-        secondaryMuscles: ex.secondaryMuscles||[],
-        instructions: ex.instructions||[]
-      };
-    });
-
-    if(!exs.length) throw new Error('Sin ejercicios para este músculo');
+    const muscle=MUSCLE_MAP[muscleId]||muscleId;
+    const r=await fetch(`${EDB_BASE}/exercises/muscle/${encodeURIComponent(muscle)}?limit=30&offset=0`);
+    if(!r.ok) throw new Error(`API error ${r.status}`);
+    const data=await r.json();
+    const list=data.data?.exercises||data.exercises||data||[];
+    if(!list.length) throw new Error('Sin ejercicios para este músculo');
+    const exs=list.map(e=>({
+      name: e.name,
+      gifUrl: e.gifUrl||null,
+      allImages: e.gifUrl?[e.gifUrl]:[],
+      target: e.target||e.muscle||muscle,
+      equipment: e.equipment||'',
+      secondaryMuscles: e.secondaryMuscles||[],
+      instructions: e.instructions||[]
+    }));
     libCache[muscleId]=exs;
     renderLib(exs);
-  } catch(e){
-    console.error(e);
-    grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">😅 ${e.message}</div>`;
+  } catch(e) {
+    console.error('Library error:',e);
+    // Fallback: mostrar ejercicios sin imagen
+    const fallback=getFallbackExercises(muscleId);
+    if(fallback.length){libCache[muscleId]=fallback;renderLib(fallback);}
+    else grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">Sin conexión a la base de ejercicios.<br><small style="color:var(--muted)">${e.message}</small></div>`;
   }
+}
+
+function getFallbackExercises(muscleId) {
+  const sets = {
+    chest: ['Bench Press','Incline Dumbbell Press','Cable Fly','Push-Up','Dips','Pec Deck','Decline Press','Chest Press Machine'],
+    back: ['Pull-Up','Barbell Row','Lat Pulldown','Seated Row','Deadlift','Face Pull','T-Bar Row','Single Arm Row'],
+    shoulders: ['Overhead Press','Lateral Raise','Front Raise','Rear Delt Fly','Arnold Press','Upright Row','Cable Lateral Raise'],
+    'upper arms': ['Barbell Curl','Hammer Curl','Tricep Pushdown','Skull Crusher','Preacher Curl','Overhead Tricep Extension'],
+    'lower arms': ['Wrist Curl','Reverse Curl','Farmer Walk','Plate Pinch'],
+    'upper legs': ['Squat','Leg Press','Romanian Deadlift','Lunges','Hack Squat','Leg Extension','Leg Curl','Bulgarian Split Squat'],
+    'lower legs': ['Standing Calf Raise','Seated Calf Raise','Leg Press Calf Raise','Donkey Calf Raise'],
+    waist: ['Plank','Crunch','Russian Twist','Leg Raise','Ab Wheel','Cable Crunch','Side Plank'],
+    cardio: ['Treadmill Run','Jump Rope','Burpees','Mountain Climbers','Box Jump','Rowing Machine','Bike','Elliptical']
+  };
+  return (sets[muscleId]||[]).map(name=>({
+    name, gifUrl:null, allImages:[], target:muscleId, equipment:'', secondaryMuscles:[], instructions:[]
+  }));
 }
 function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
