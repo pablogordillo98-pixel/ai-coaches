@@ -686,6 +686,12 @@ async function loadLibrary(muscleId) {
     grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">😅 ${e.message}</div>`;
   }
 }
+// Proxy images through weserv.nl to bypass CORS restrictions
+function proxyImg(url) {
+  if(!url) return null;
+  return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&output=jpg&w=400`;
+}
+
 function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
   if(!exs.length){grid.innerHTML='<div class="lib-empty">Sin ejercicios encontrados</div>';return;}
@@ -699,11 +705,12 @@ function renderLib(exs) {
       secondaryMuscles:ex.secondaryMuscles||[],
       instructions:ex.instructions||[]
     };
+    const proxied=proxyImg(safeEx.gifUrl);
     const dataAttr=JSON.stringify(safeEx).replace(/"/g,'&quot;');
     return `<div class="lib-card" onclick="openGifModal(JSON.parse(this.getAttribute('data-ex')))" data-ex="${dataAttr}">
       <div class="lib-img-wrap">
-        ${safeEx.gifUrl?`<img class="lib-img" src="${safeEx.gifUrl}" alt="" loading="lazy" onerror="this.style.display='none';this.parentElement.querySelector('.lib-placeholder').style.display='flex'">`:'' }
-        <div class="lib-placeholder" style="${safeEx.gifUrl?'display:none':'display:flex'}">💪</div>
+        ${proxied?`<img class="lib-img" src="${proxied}" alt="" loading="lazy" onerror="this.style.display='none';this.parentElement.querySelector('.lib-placeholder').style.display='flex'">`:'' }
+        <div class="lib-placeholder" style="${proxied?'display:none':'display:flex'}">💪</div>
       </div>
       <div class="lib-info">
         <div class="lib-name">${safeEx.name}</div>
@@ -721,22 +728,24 @@ function openGifModal(ex) {
   if(ex.equipment) tags.innerHTML+=`<span class="gif-tag equip">${ex.equipment}</span>`;
   (ex.secondaryMuscles||[]).slice(0,3).forEach(m=>tags.innerHTML+=`<span class="gif-tag equip">${m}</span>`);
 
-  // Images — show start + end position side by side
-  const imgs=ex.allImages&&ex.allImages.length>0?ex.allImages:(ex.gifUrl?[ex.gifUrl]:[]);
+  // Images — show start + end position side by side, proxied
+  const rawImgs=ex.allImages&&ex.allImages.length>0?ex.allImages:(ex.gifUrl?[ex.gifUrl]:[]);
+  const imgs=rawImgs.map(u=>proxyImg(u)).filter(Boolean);
   const imgContainer=document.getElementById('gifImgContainer');
+
   if(imgs.length>=2){
-    imgContainer.innerHTML=`<div style="display:flex;gap:2px;background:var(--dark);border-bottom:1px solid var(--border)">
-      <div style="flex:1;text-align:center;padding:4px 2px">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">INICIO</div>
-        <img src="${imgs[0]}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px" onerror="this.parentElement.innerHTML='💪'">
+    imgContainer.innerHTML=`<div style="display:flex;gap:2px;background:var(--dark);padding:8px;border-bottom:1px solid var(--border)">
+      <div style="flex:1;text-align:center">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:6px">INICIO</div>
+        <img src="${imgs[0]}" style="width:100%;max-height:180px;object-fit:contain;border-radius:8px;background:var(--card)" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'💪',style:'font-size:40px;text-align:center;padding:20px'}))">
       </div>
-      <div style="flex:1;text-align:center;padding:4px 2px">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">FIN</div>
-        <img src="${imgs[1]}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px" onerror="this.parentElement.innerHTML='💪'">
+      <div style="flex:1;text-align:center">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:6px">FIN</div>
+        <img src="${imgs[1]}" style="width:100%;max-height:180px;object-fit:contain;border-radius:8px;background:var(--card)" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'💪',style:'font-size:40px;text-align:center;padding:20px'}))">
       </div>
     </div>`;
   } else if(imgs.length===1){
-    imgContainer.innerHTML=`<img src="${imgs[0]}" style="width:100%;max-height:280px;object-fit:contain;display:block;background:var(--dark)" onerror="this.style.display='none'">`;
+    imgContainer.innerHTML=`<img src="${imgs[0]}" style="width:100%;max-height:280px;object-fit:contain;display:block;background:var(--dark);padding:8px" onerror="this.style.display='none'">`;
   } else {
     imgContainer.innerHTML=`<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:48px;background:var(--dark)">💪</div>`;
   }
