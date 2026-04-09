@@ -160,7 +160,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .lib-card:active{border-color:rgba(200,255,0,.5)}
 .lib-img-wrap{width:100%;height:130px;background:var(--dark);overflow:hidden;position:relative;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:center}
 .lib-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:block}
-.lib-placeholder{font-size:42px;z-index:1;pointer-events:none}
+.lib-placeholder{font-size:42px;line-height:1;pointer-events:none}
 .lib-info{padding:8px 10px}
 .lib-name{font-size:11px;font-weight:500;color:var(--text);text-transform:capitalize;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4;margin-bottom:2px}
 .lib-muscle{font-family:'DM Mono',monospace;font-size:9px;color:var(--accent);letter-spacing:1px;text-transform:uppercase}
@@ -688,80 +688,81 @@ function getFallbackExercises(muscleId) {
     name, gifUrl:null, allImages:[], target:muscleId, equipment:'', secondaryMuscles:[], instructions:[]
   }));
 }
+let currentExercises = []; // global array, no JSON encoding issues
+
 function renderLib(exs) {
-  const grid=document.getElementById('libraryGrid');
-  if(!exs.length){grid.innerHTML='<div class="lib-empty">Sin ejercicios encontrados</div>';return;}
-  grid.innerHTML=exs.map(ex=>{
-    const safeEx={
-      name:ex.name||'Exercise',
-      gifUrl:ex.gifUrl||null,
-      allImages:ex.allImages||[],
-      target:ex.target||'',
-      equipment:ex.equipment||'',
-      secondaryMuscles:ex.secondaryMuscles||[],
-      instructions:ex.instructions||[]
-    };
-    const dataAttr=JSON.stringify(safeEx).replace(/"/g,'&quot;');
-    const img=safeEx.gifUrl;
-    // Placeholder always rendered — image loads on top if available
-    return `<div class="lib-card" onclick="openGifModal(JSON.parse(this.getAttribute('data-ex')))" data-ex="${dataAttr}">
+  currentExercises = exs;
+  const grid = document.getElementById('libraryGrid');
+  if (!exs.length) { grid.innerHTML = '<div class="lib-empty">Sin ejercicios encontrados</div>'; return; }
+  grid.innerHTML = exs.map((ex, i) => {
+    const img = ex.gifUrl || null;
+    const name = (ex.name || 'Exercise');
+    const muscle = ex.target || '';
+    return `<div class="lib-card" onclick="openExercise(${i})">
       <div class="lib-img-wrap">
-        <div class="lib-placeholder">💪</div>
-        ${img?`<img class="lib-img" src="${img}" alt="" loading="lazy" onerror="this.remove()">`:'' }
+        <span class="lib-placeholder">💪</span>
+        ${img ? `<img class="lib-img" src="${img}" alt="" loading="lazy" onerror="this.remove()">` : ''}
       </div>
       <div class="lib-info">
-        <div class="lib-name">${safeEx.name}</div>
-        ${safeEx.target?`<div class="lib-muscle">${safeEx.target}</div>`:''}
+        <div class="lib-name">${name}</div>
+        ${muscle ? `<div class="lib-muscle">${muscle}</div>` : ''}
       </div>
     </div>`;
   }).join('');
 }
 
-function openGifModal(ex) {
-  document.getElementById('gifModalName').textContent=ex.name;
-  const tags=document.getElementById('gifModalTags');
-  tags.innerHTML='';
-  if(ex.target) tags.innerHTML+=`<span class="gif-tag muscle">${ex.target}</span>`;
-  if(ex.equipment) tags.innerHTML+=`<span class="gif-tag equip">${ex.equipment}</span>`;
-  (ex.secondaryMuscles||[]).slice(0,3).forEach(m=>tags.innerHTML+=`<span class="gif-tag equip">${m}</span>`);
+function openExercise(i) {
+  const ex = currentExercises[i];
+  if (!ex) return;
 
-  // Images — show start + end position side by side
-  const imgs=ex.allImages&&ex.allImages.length>0?ex.allImages:(ex.gifUrl?[ex.gifUrl]:[]);
-  const imgContainer=document.getElementById('gifImgContainer');
+  // Name
+  document.getElementById('gifModalName').textContent = ex.name || 'Exercise';
 
-  if(imgs.length>=2){
-    imgContainer.innerHTML=`<div style="display:flex;gap:2px;background:var(--dark);padding:8px;border-bottom:1px solid var(--border)">
-      <div style="flex:1;text-align:center">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:6px">INICIO</div>
-        <img src="${imgs[0]}" style="width:100%;max-height:180px;object-fit:contain;border-radius:8px;background:var(--card)" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'💪',style:'font-size:40px;text-align:center;padding:20px'}))">
-      </div>
-      <div style="flex:1;text-align:center">
-        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:6px">FIN</div>
-        <img src="${imgs[1]}" style="width:100%;max-height:180px;object-fit:contain;border-radius:8px;background:var(--card)" onerror="this.replaceWith(Object.assign(document.createElement('div'),{textContent:'💪',style:'font-size:40px;text-align:center;padding:20px'}))">
-      </div>
+  // Tags
+  const tags = document.getElementById('gifModalTags');
+  tags.innerHTML = '';
+  if (ex.target) tags.innerHTML += `<span class="gif-tag muscle">${ex.target}</span>`;
+  if (ex.equipment) tags.innerHTML += `<span class="gif-tag equip">${ex.equipment}</span>`;
+  (ex.secondaryMuscles || []).slice(0, 3).forEach(m => {
+    tags.innerHTML += `<span class="gif-tag equip">${m}</span>`;
+  });
+
+  // Image
+  const imgContainer = document.getElementById('gifImgContainer');
+  if (ex.gifUrl) {
+    imgContainer.innerHTML = `<div style="background:var(--dark);border-bottom:1px solid var(--border);min-height:200px;display:flex;align-items:center;justify-content:center">
+      <img src="${ex.gifUrl}" style="width:100%;max-height:300px;object-fit:contain;display:block"
+        onerror="this.parentElement.innerHTML='<div style=padding:40px;text-align:center;font-size:56px>💪</div>'">
     </div>`;
-  } else if(imgs.length===1){
-    imgContainer.innerHTML=`<img src="${imgs[0]}" style="width:100%;max-height:280px;object-fit:contain;display:block;background:var(--dark);padding:8px" onerror="this.style.display='none'">`;
   } else {
-    imgContainer.innerHTML=`<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:48px;background:var(--dark)">💪</div>`;
+    imgContainer.innerHTML = `<div style="height:160px;display:flex;align-items:center;justify-content:center;font-size:56px;background:var(--dark);border-bottom:1px solid var(--border)">💪</div>`;
   }
 
   // Instructions
-  const instrEl=document.getElementById('gifInstructions');
-  if(ex.instructions&&ex.instructions.length>0){
-    instrEl.style.display='block';
-    instrEl.innerHTML=`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:1px;margin-bottom:8px;text-transform:uppercase">Cómo hacerlo</div>`+
-      ex.instructions.slice(0,5).map((step,i)=>`<div style="display:flex;gap:10px;margin-bottom:8px;font-size:13px;line-height:1.5">
-        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);flex-shrink:0;min-width:16px">${i+1}.</span>
-        <span style="color:var(--text)">${step}</span>
-      </div>`).join('');
+  const instrEl = document.getElementById('gifInstructions');
+  if (ex.instructions && ex.instructions.length > 0) {
+    instrEl.style.display = 'block';
+    instrEl.innerHTML =
+      `<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:1px;margin-bottom:10px;text-transform:uppercase">Cómo hacerlo</div>` +
+      ex.instructions.slice(0, 6).map((step, idx) =>
+        `<div style="display:flex;gap:10px;margin-bottom:10px;font-size:13px;line-height:1.6">
+          <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);flex-shrink:0;padding-top:1px">${idx + 1}.</span>
+          <span style="color:var(--text)">${step}</span>
+        </div>`
+      ).join('');
   } else {
-    instrEl.style.display='none';
+    instrEl.style.display = 'none';
   }
 
   document.getElementById('gifModal').classList.add('open');
 }
-function closeGifModal(){document.getElementById('gifModal').classList.remove('open');}
+
+// Keep openGifModal as alias for chat GIFs
+function openGifModal(ex) {
+  currentExercises = [ex];
+  openExercise(0);
+}
+function closeGifModal() { document.getElementById('gifModal').classList.remove('open'); }
 
 // ════════════════════════════════════════
 // MESSAGES
