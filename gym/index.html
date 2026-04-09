@@ -158,7 +158,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .library-grid::-webkit-scrollbar{display:none}
 .lib-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .2s;display:flex;flex-direction:column}
 .lib-card:active{border-color:rgba(200,255,0,.5)}
-.lib-img-wrap{width:100%;aspect-ratio:1;background:var(--dark);overflow:hidden;position:relative;border-bottom:1px solid var(--border)}
+.lib-img-wrap{width:100%;aspect-ratio:1;background:var(--dark);overflow:hidden;position:relative;border-bottom:1px solid var(--border);min-height:120px}
 .lib-img{width:100%;height:100%;object-fit:cover;display:block}
 .lib-placeholder{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px;background:var(--dark)}
 .lib-info{padding:8px 10px;flex:1}
@@ -614,17 +614,15 @@ async function fetchOneExercise(name) {
 }
 
 
-// ════════════════════════════════════════
-// EXERCISE LIBRARY — Free Exercise DB (GitHub CDN, no CORS)
-// ════════════════════════════════════════
-const FREE_DB_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main';
+// jsDelivr CDN - allows cross-origin from any domain unlike raw.githubusercontent.com
+const FREE_DB_BASE = 'https://cdn.jsdelivr.net/gh/yuhonas/free-exercise-db@main';
 const FREE_DB_JSON = `${FREE_DB_BASE}/dist/exercises.json`;
-let allExercises = null; // full dataset cached once
+let allExercises = null;
 
 const MUSCLE_MAP = {
-  chest:        ['chest'],
+  chest:        ['chest','pectorals'],
   back:         ['lats','middle back','lower back','traps'],
-  shoulders:    ['shoulders'],
+  shoulders:    ['shoulders','delts'],
   'upper arms': ['biceps','triceps'],
   'lower arms': ['forearms'],
   'upper legs': ['quadriceps','hamstrings','glutes','adductors','abductors'],
@@ -632,6 +630,12 @@ const MUSCLE_MAP = {
   waist:        ['abdominals'],
   cardio:       ['cardiovascular system']
 };
+
+// jsDelivr allows cross-origin, no proxy needed
+function imgUrl(rawUrl) {
+  if(!rawUrl) return null;
+  return rawUrl; // jsDelivr URLs work directly
+}
 
 function renderMuscleTabs() {
   document.getElementById('muscleTabs').innerHTML=MUSCLES.map(m=>
@@ -686,12 +690,6 @@ async function loadLibrary(muscleId) {
     grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">😅 ${e.message}</div>`;
   }
 }
-// Proxy images through weserv.nl to bypass CORS restrictions
-function proxyImg(url) {
-  if(!url) return null;
-  return `https://images.weserv.nl/?url=${encodeURIComponent(url)}&output=jpg&w=400`;
-}
-
 function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
   if(!exs.length){grid.innerHTML='<div class="lib-empty">Sin ejercicios encontrados</div>';return;}
@@ -705,12 +703,12 @@ function renderLib(exs) {
       secondaryMuscles:ex.secondaryMuscles||[],
       instructions:ex.instructions||[]
     };
-    const proxied=proxyImg(safeEx.gifUrl);
     const dataAttr=JSON.stringify(safeEx).replace(/"/g,'&quot;');
+    const img=safeEx.gifUrl;
     return `<div class="lib-card" onclick="openGifModal(JSON.parse(this.getAttribute('data-ex')))" data-ex="${dataAttr}">
       <div class="lib-img-wrap">
-        ${proxied?`<img class="lib-img" src="${proxied}" alt="" loading="lazy" onerror="this.style.display='none';this.parentElement.querySelector('.lib-placeholder').style.display='flex'">`:'' }
-        <div class="lib-placeholder" style="${proxied?'display:none':'display:flex'}">💪</div>
+        ${img?`<img class="lib-img" src="${img}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`:'' }
+        <div class="lib-placeholder" style="display:${img?'none':'flex'}">💪</div>
       </div>
       <div class="lib-info">
         <div class="lib-name">${safeEx.name}</div>
@@ -728,9 +726,8 @@ function openGifModal(ex) {
   if(ex.equipment) tags.innerHTML+=`<span class="gif-tag equip">${ex.equipment}</span>`;
   (ex.secondaryMuscles||[]).slice(0,3).forEach(m=>tags.innerHTML+=`<span class="gif-tag equip">${m}</span>`);
 
-  // Images — show start + end position side by side, proxied
-  const rawImgs=ex.allImages&&ex.allImages.length>0?ex.allImages:(ex.gifUrl?[ex.gifUrl]:[]);
-  const imgs=rawImgs.map(u=>proxyImg(u)).filter(Boolean);
+  // Images — show start + end position side by side
+  const imgs=ex.allImages&&ex.allImages.length>0?ex.allImages:(ex.gifUrl?[ex.gifUrl]:[]);
   const imgContainer=document.getElementById('gifImgContainer');
 
   if(imgs.length>=2){
