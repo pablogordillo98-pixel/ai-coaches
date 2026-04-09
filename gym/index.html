@@ -568,21 +568,45 @@ async function fetchGifs(names) {
   const box=document.createElement('div'); box.className='exercise-gifs';
   box.innerHTML='<div class="gif-loading">🔍 BUSCANDO EJERCICIOS...</div>';
   c.appendChild(box); scrollChat();
+
   const results=[];
   for(const name of names){
     let ex=await fetchOneExercise(name);
-    results.push(ex||{name,gifUrl:null,target:'',equipment:'',secondaryMuscles:[]});
+    results.push(ex||{name,gifUrl:null,target:'',equipment:'',secondaryMuscles:[],instructions:[]});
   }
-  box.innerHTML=results.map(ex=>`
-    <div class="gif-card" onclick='openGifModal(${JSON.stringify(ex)})'>
-      ${ex.gifUrl?`<img class="gif-thumb" src="${ex.gifUrl}" alt="${ex.name}" loading="lazy" onerror="this.parentElement.querySelector('.gif-thumb').style.display='none'">`:`<div class="gif-placeholder">💪</div>`}
+
+  // Store in currentExercises for modal
+  const startIdx=currentExercises.length;
+  currentExercises.push(...results);
+
+  box.innerHTML=results.map((ex,i)=>`
+    <div class="gif-card" onclick="openExercise(${startIdx+i})" id="gifcard-${startIdx+i}">
+      <div class="gif-placeholder" id="gifthumb-placeholder-${startIdx+i}">💪</div>
       <div class="gif-info">
         <div class="gif-name">${ex.name}</div>
         ${ex.target?`<div class="gif-muscle">${ex.target}</div>`:''}
         ${ex.equipment?`<div class="gif-equip">${ex.equipment}</div>`:''}
       </div>
-      ${ex.gifUrl?'<div class="gif-arrow">›</div>':''}
+      <div class="gif-arrow">›</div>
     </div>`).join('');
+
+  // Load GIF thumbnails via blob
+  results.forEach(async (ex,i)=>{
+    if(!ex.gifUrl) return;
+    try {
+      const r=await fetch(ex.gifUrl,{mode:'cors'});
+      if(!r.ok) return;
+      const blob=await r.blob();
+      const blobUrl=URL.createObjectURL(blob);
+      const card=document.getElementById(`gifcard-${startIdx+i}`);
+      if(!card) return;
+      const ph=document.getElementById(`gifthumb-placeholder-${startIdx+i}`);
+      const img=document.createElement('img');
+      img.className='gif-thumb';
+      img.src=blobUrl;
+      if(ph) ph.replaceWith(img); else card.prepend(img);
+    } catch(e){}
+  });
   scrollChat();
 }
 
@@ -615,20 +639,19 @@ async function fetchOneExercise(name) {
 
 
 
-// ExerciseDB público en Vercel — sin RapidAPI, sin CORS
-const EDB_BASE = 'https://exercisedb-api.vercel.app/api/v1';
-let allExercises = null;
-
+// ════════════════════════════════════════
+// EXERCISE LIBRARY
+// ════════════════════════════════════════
 const MUSCLE_MAP = {
-  chest:        'pectorals',
-  back:         'lats',
-  shoulders:    'delts',
-  'upper arms': 'biceps',
-  'lower arms': 'forearms',
-  'upper legs': 'quadriceps',
-  'lower legs': 'calves',
-  waist:        'abdominals',
-  cardio:       'cardiovascular system'
+  chest:        'chest',
+  back:         'back',
+  shoulders:    'shoulders',
+  'upper arms': 'upper arms',
+  'lower arms': 'lower arms',
+  'upper legs': 'upper legs',
+  'lower legs': 'lower legs',
+  waist:        'waist',
+  cardio:       'cardio'
 };
 
 function renderMuscleTabs() {
@@ -645,31 +668,55 @@ async function loadLibrary(muscleId) {
   const grid=document.getElementById('libraryGrid');
   if(libCache[muscleId]){renderLib(libCache[muscleId]);return;}
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
+
   try {
-    const muscle=MUSCLE_MAP[muscleId]||muscleId;
-    const r=await fetch(`${EDB_BASE}/exercises/muscle/${encodeURIComponent(muscle)}?limit=30&offset=0`);
-    if(!r.ok) throw new Error(`API error ${r.status}`);
+    // RapidAPI call works fine from browser — the CORS issue was only with the image URLs
+    const r=await fetch(
+      `https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=40&offset=0`,
+      {method:'GET', headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}}
+    );
+    if(!r.ok) throw new Error(`${r.status}`);
     const data=await r.json();
-    const list=data.data?.exercises||data.exercises||data||[];
-    if(!list.length) throw new Error('Sin ejercicios para este músculo');
-    const exs=list.map(e=>({
+    if(!Array.isArray(data)||!data.length) throw new Error('empty');
+
+    const exs=data.map(e=>({
       name: e.name,
-      gifUrl: e.gifUrl||null,
-      allImages: e.gifUrl?[e.gifUrl]:[],
-      target: e.target||e.muscle||muscle,
+      gifUrl: e.gifUrl||null, // store URL but load via fetch blob
+      target: e.target||muscleId,
       equipment: e.equipment||'',
       secondaryMuscles: e.secondaryMuscles||[],
       instructions: e.instructions||[]
     }));
     libCache[muscleId]=exs;
     renderLib(exs);
+    // After rendering, load GIFs via fetch to bypass image CORS
+    loadGifsViaBlobUrls(exs);
   } catch(e) {
-    console.error('Library error:',e);
-    // Fallback: mostrar ejercicios sin imagen
+    console.log('RapidAPI err, using fallback:', e.message);
     const fallback=getFallbackExercises(muscleId);
-    if(fallback.length){libCache[muscleId]=fallback;renderLib(fallback);}
-    else grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">Sin conexión a la base de ejercicios.<br><small style="color:var(--muted)">${e.message}</small></div>`;
+    libCache[muscleId]=fallback;
+    renderLib(fallback);
   }
+}
+
+// Fetch GIFs as blobs to bypass CORS — works even when direct img src doesn't
+async function loadGifsViaBlobUrls(exs) {
+  const cards=document.querySelectorAll('#libraryGrid .lib-card');
+  exs.forEach(async (ex, i)=>{
+    if(!ex.gifUrl||!cards[i]) return;
+    try {
+      const r=await fetch(ex.gifUrl,{mode:'cors'});
+      if(!r.ok) return;
+      const blob=await r.blob();
+      const blobUrl=URL.createObjectURL(blob);
+      const wrap=cards[i].querySelector('.lib-img-wrap');
+      if(!wrap) return;
+      const img=document.createElement('img');
+      img.className='lib-img';
+      img.src=blobUrl;
+      wrap.appendChild(img);
+    } catch(e){} // silently fail, emoji stays
+  });
 }
 
 function getFallbackExercises(muscleId) {
