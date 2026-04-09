@@ -84,9 +84,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .gif-modal-inner{background:var(--dark);border:1px solid var(--border);border-radius:20px 20px 0 0;width:100%;max-width:500px;padding-bottom:var(--safe-bottom);animation:sheetUp .3s ease;max-height:92vh;overflow-y:auto}
 @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 .gif-modal-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:14px auto 0}
-#gifModalImg{width:100%;display:block;max-height:300px;object-fit:contain;background:var(--card);min-height:200px}
-#gifModalImg[src=""]{display:none}
-.gif-modal-img-placeholder{width:100%;height:200px;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:48px}
+#gifModalImg{display:none}
 .gif-modal-info{padding:16px}
 .gif-modal-name{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:1px;margin-bottom:8px;text-transform:capitalize}
 .gif-modal-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
@@ -311,10 +309,11 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 <div id="gifModal" onclick="closeGifModal()">
   <div class="gif-modal-inner" onclick="event.stopPropagation()">
     <div class="gif-modal-handle"></div>
-    <img id="gifModalImg" src="" alt="">
+    <div id="gifImgContainer"></div>
     <div class="gif-modal-info">
       <div class="gif-modal-name" id="gifModalName"></div>
       <div class="gif-modal-tags" id="gifModalTags"></div>
+      <div id="gifInstructions" style="margin-top:14px;margin-bottom:14px"></div>
       <button class="gif-close-btn" onclick="closeGifModal()">CERRAR</button>
     </div>
   </div>
@@ -614,107 +613,76 @@ async function fetchOneExercise(name) {
   return null;
 }
 
-function openGifModal(ex) {
-  const img = document.getElementById('gifModalImg');
-  const name = document.getElementById('gifModalName');
-  const tags = document.getElementById('gifModalTags');
-  const modal = document.getElementById('gifModal');
-
-  // Reset first
-  img.style.display = 'none';
-  img.src = '';
-  name.textContent = ex.name;
-  tags.innerHTML = '';
-
-  if (ex.target) tags.innerHTML += `<span class="gif-tag muscle">${ex.target}</span>`;
-  if (ex.equipment) tags.innerHTML += `<span class="gif-tag equip">${ex.equipment}</span>`;
-  (ex.secondaryMuscles||[]).slice(0,3).forEach(m => tags.innerHTML += `<span class="gif-tag equip">${m}</span>`);
-
-  if (ex.gifUrl) {
-    img.style.display = 'block';
-    // Use a fresh image element to avoid caching issues
-    const tempImg = new Image();
-    tempImg.crossOrigin = 'anonymous';
-    tempImg.onload = () => { img.src = ex.gifUrl; img.style.display = 'block'; };
-    tempImg.onerror = () => { img.style.display = 'none'; };
-    tempImg.src = ex.gifUrl;
-    // Set directly too as fallback
-    img.src = ex.gifUrl;
-  }
-
-  modal.classList.add('open');
-}
-function closeGifModal(){document.getElementById('gifModal').classList.remove('open');setTimeout(()=>{document.getElementById('gifModalImg').src='';},300);}
 
 // ════════════════════════════════════════
-// EXERCISE LIBRARY
+// EXERCISE LIBRARY — Free Exercise DB (GitHub CDN, no CORS)
 // ════════════════════════════════════════
+const FREE_DB_BASE = 'https://raw.githubusercontent.com/yuhonas/free-exercise-db/main';
+const FREE_DB_JSON = `${FREE_DB_BASE}/dist/exercises.json`;
+let allExercises = null; // full dataset cached once
+
+const MUSCLE_MAP = {
+  chest:        ['chest'],
+  back:         ['lats','middle back','lower back','traps'],
+  shoulders:    ['shoulders'],
+  'upper arms': ['biceps','triceps'],
+  'lower arms': ['forearms'],
+  'upper legs': ['quadriceps','hamstrings','glutes','adductors','abductors'],
+  'lower legs': ['calves'],
+  waist:        ['abdominals'],
+  cardio:       ['cardiovascular system']
+};
+
 function renderMuscleTabs() {
   document.getElementById('muscleTabs').innerHTML=MUSCLES.map(m=>
     `<button class="muscle-tab${m.id===currentMuscle?' active':''}" onclick="selectMuscle('${m.id}')">${m.label}</button>`
   ).join('');
 }
+
 async function selectMuscle(id) {
   currentMuscle=id; renderMuscleTabs(); await loadLibrary(id);
 }
+
 async function loadLibrary(muscleId) {
   const grid=document.getElementById('libraryGrid');
   if(libCache[muscleId]){renderLib(libCache[muscleId]);return;}
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
   try {
-    let exs=[];
-
-    // Try ExerciseDB RapidAPI
-    try {
-      const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=50&offset=0`,
-        {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
-      if(r.ok){
-        const d=await r.json();
-        if(Array.isArray(d)&&d.length){
-          // ExerciseDB gifUrls are like: https://v2.exercisedb.io/image/...
-          // These support cross-origin — use them directly
-          exs=d.map(e=>({
-            name:e.name,
-            gifUrl:e.gifUrl||null,
-            target:e.target,
-            equipment:e.equipment,
-            secondaryMuscles:e.secondaryMuscles||[]
-          }));
-        }
-      }
-    } catch(e){ console.log('ExerciseDB err:',e.message); }
-
-    // Fallback: wger with correct image endpoint
-    if(!exs.length){
-      const catMap={chest:10,back:12,shoulders:13,'upper arms':8,'lower arms':11,'upper legs':9,'lower legs':14,waist:10,cardio:15};
-      const cat=catMap[muscleId]||10;
-      try {
-        // Get exercises with images in one call using exerciseinfo endpoint
-        const r=await fetch(`https://wger.de/api/v2/exerciseinfo/?format=json&language=2&category=${cat}&limit=30&offset=0`);
-        if(r.ok){
-          const d=await r.json();
-          exs=d.results
-            .filter(e=>e.translations?.find(t=>t.language===2&&t.name))
-            .map(e=>{
-              const trans=e.translations.find(t=>t.language===2);
-              const img=e.images?.find(i=>i.is_main)||e.images?.[0];
-              return{
-                name:trans?.name||e.name||'Exercise',
-                gifUrl:img?.image||null,
-                target:e.category?.name||muscleId,
-                equipment:e.equipment?.[0]?.name||'',
-                secondaryMuscles:[]
-              };
-            })
-            .filter(e=>e.name&&e.name.length>2);
-        }
-      } catch(e){ console.log('wger err:',e.message); }
+    // Load full dataset once
+    if(!allExercises) {
+      const r=await fetch(FREE_DB_JSON);
+      if(!r.ok) throw new Error('No se pudo cargar la base de ejercicios');
+      allExercises=await r.json();
     }
+    // Filter by muscle group
+    const targets=MUSCLE_MAP[muscleId]||[muscleId];
+    const filtered=allExercises.filter(ex=>
+      targets.some(t=>
+        (ex.primaryMuscles||[]).some(m=>m.toLowerCase().includes(t.toLowerCase())) ||
+        (ex.secondaryMuscles||[]).some(m=>m.toLowerCase().includes(t.toLowerCase()))
+      )
+    ).slice(0,40);
 
-    if(!exs.length) throw new Error('Sin ejercicios encontrados');
+    const exs=filtered.map(ex=>{
+      // Images are at: FREE_DB_BASE/exercises/{id}/{img}
+      const firstImg=ex.images?.[0];
+      const gifUrl=firstImg ? `${FREE_DB_BASE}/exercises/${ex.id}/${firstImg}` : null;
+      return {
+        name: ex.name,
+        gifUrl,
+        allImages: (ex.images||[]).map(img=>`${FREE_DB_BASE}/exercises/${ex.id}/${img}`),
+        target: ex.primaryMuscles?.[0]||muscleId,
+        equipment: ex.equipment||'',
+        secondaryMuscles: ex.secondaryMuscles||[],
+        instructions: ex.instructions||[]
+      };
+    });
+
+    if(!exs.length) throw new Error('Sin ejercicios para este músculo');
     libCache[muscleId]=exs;
     renderLib(exs);
   } catch(e){
+    console.error(e);
     grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">😅 ${e.message}</div>`;
   }
 }
@@ -722,7 +690,15 @@ function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
   if(!exs.length){grid.innerHTML='<div class="lib-empty">Sin ejercicios encontrados</div>';return;}
   grid.innerHTML=exs.map(ex=>{
-    const safeEx={name:ex.name||'Exercise',gifUrl:ex.gifUrl||null,target:ex.target||ex.bodyPart||'',equipment:ex.equipment||'',secondaryMuscles:ex.secondaryMuscles||[]};
+    const safeEx={
+      name:ex.name||'Exercise',
+      gifUrl:ex.gifUrl||null,
+      allImages:ex.allImages||[],
+      target:ex.target||'',
+      equipment:ex.equipment||'',
+      secondaryMuscles:ex.secondaryMuscles||[],
+      instructions:ex.instructions||[]
+    };
     const dataAttr=JSON.stringify(safeEx).replace(/"/g,'&quot;');
     return `<div class="lib-card" onclick="openGifModal(JSON.parse(this.getAttribute('data-ex')))" data-ex="${dataAttr}">
       <div class="lib-img-wrap">
@@ -736,6 +712,51 @@ function renderLib(exs) {
     </div>`;
   }).join('');
 }
+
+function openGifModal(ex) {
+  document.getElementById('gifModalName').textContent=ex.name;
+  const tags=document.getElementById('gifModalTags');
+  tags.innerHTML='';
+  if(ex.target) tags.innerHTML+=`<span class="gif-tag muscle">${ex.target}</span>`;
+  if(ex.equipment) tags.innerHTML+=`<span class="gif-tag equip">${ex.equipment}</span>`;
+  (ex.secondaryMuscles||[]).slice(0,3).forEach(m=>tags.innerHTML+=`<span class="gif-tag equip">${m}</span>`);
+
+  // Images — show start + end position side by side
+  const imgs=ex.allImages&&ex.allImages.length>0?ex.allImages:(ex.gifUrl?[ex.gifUrl]:[]);
+  const imgContainer=document.getElementById('gifImgContainer');
+  if(imgs.length>=2){
+    imgContainer.innerHTML=`<div style="display:flex;gap:2px;background:var(--dark);border-bottom:1px solid var(--border)">
+      <div style="flex:1;text-align:center;padding:4px 2px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">INICIO</div>
+        <img src="${imgs[0]}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px" onerror="this.parentElement.innerHTML='💪'">
+      </div>
+      <div style="flex:1;text-align:center;padding:4px 2px">
+        <div style="font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);letter-spacing:1px;margin-bottom:4px">FIN</div>
+        <img src="${imgs[1]}" style="width:100%;max-height:200px;object-fit:contain;border-radius:6px" onerror="this.parentElement.innerHTML='💪'">
+      </div>
+    </div>`;
+  } else if(imgs.length===1){
+    imgContainer.innerHTML=`<img src="${imgs[0]}" style="width:100%;max-height:280px;object-fit:contain;display:block;background:var(--dark)" onerror="this.style.display='none'">`;
+  } else {
+    imgContainer.innerHTML=`<div style="height:120px;display:flex;align-items:center;justify-content:center;font-size:48px;background:var(--dark)">💪</div>`;
+  }
+
+  // Instructions
+  const instrEl=document.getElementById('gifInstructions');
+  if(ex.instructions&&ex.instructions.length>0){
+    instrEl.style.display='block';
+    instrEl.innerHTML=`<div style="font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:1px;margin-bottom:8px;text-transform:uppercase">Cómo hacerlo</div>`+
+      ex.instructions.slice(0,5).map((step,i)=>`<div style="display:flex;gap:10px;margin-bottom:8px;font-size:13px;line-height:1.5">
+        <span style="font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);flex-shrink:0;min-width:16px">${i+1}.</span>
+        <span style="color:var(--text)">${step}</span>
+      </div>`).join('');
+  } else {
+    instrEl.style.display='none';
+  }
+
+  document.getElementById('gifModal').classList.add('open');
+}
+function closeGifModal(){document.getElementById('gifModal').classList.remove('open');}
 
 // ════════════════════════════════════════
 // MESSAGES
