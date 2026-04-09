@@ -588,11 +588,13 @@ async function fetchOneExercise(name) {
   const hasKey = RAPIDAPI_KEY && RAPIDAPI_KEY.length > 10;
   try {
     if(hasKey) {
-      const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(name.toLowerCase())}?limit=1`,
-        {headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
+      const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(name.toLowerCase().trim())}?limit=1&offset=0`,
+        {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
       if(r.ok){const d=await r.json();if(d?.[0])return{name:d[0].name,gifUrl:d[0].gifUrl,target:d[0].target,equipment:d[0].equipment,secondaryMuscles:d[0].secondaryMuscles||[]};}
     }
-    // Fallback: wger
+  } catch(e){ console.log('ExerciseDB fetchOne error:',e); }
+  // Fallback: wger
+  try {
     const wr=await fetch(`https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(name)}&language=english&format=json`);
     if(wr.ok){
       const wd=await wr.json(); const s=wd.suggestions?.[0];
@@ -631,31 +633,42 @@ async function loadLibrary(muscleId) {
   const grid=document.getElementById('libraryGrid');
   if(libCache[muscleId]){renderLib(libCache[muscleId]);return;}
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
-  const hasKey=RAPIDAPI_KEY&&RAPIDAPI_KEY.length>10;
   try {
     let exs=[];
-    if(hasKey){
-      const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=50`,
-        {headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
-      if(r.ok) exs=await r.json();
-    }
+    // ExerciseDB via RapidAPI
+    try {
+      const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=50&offset=0`,
+        {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
+      if(r.ok){const d=await r.json();if(Array.isArray(d)&&d.length)exs=d;}
+    } catch(e){ console.log('ExerciseDB error:',e); }
+
+    // Fallback: wger REST API
     if(!exs.length){
       const catMap={chest:10,back:12,shoulders:13,'upper arms':8,'lower arms':11,'upper legs':9,'lower legs':14,waist:10,cardio:15};
-      const r=await fetch(`https://wger.de/api/v2/exercise/?format=json&language=2&category=${catMap[muscleId]||10}&limit=30`);
-      if(r.ok){
-        const d=await r.json();
-        exs=await Promise.all(d.results.slice(0,20).map(async ex=>{
-          try{
-            const ir=await fetch(`https://wger.de/api/v2/exerciseimage/?exercise_base=${ex.exercise_base}&format=json`);
-            const id=ir.ok?await ir.json():{results:[]};
-            return{id:ex.exercise_base,name:ex.name||'Exercise',gifUrl:id.results?.[0]?.image||null,target:muscleId,equipment:''};
-          }catch{return{id:ex.exercise_base,name:ex.name||'Exercise',gifUrl:null,target:muscleId,equipment:''};}
-        }));
-      }
+      try {
+        const r=await fetch(`https://wger.de/api/v2/exercise/?format=json&language=2&category=${catMap[muscleId]||10}&limit=40&offset=0`);
+        if(r.ok){
+          const d=await r.json();
+          // Fetch images in parallel (batched)
+          const batch=d.results.slice(0,20);
+          exs=await Promise.all(batch.map(async ex=>{
+            try{
+              const ir=await fetch(`https://wger.de/api/v2/exerciseimage/?exercise_base=${ex.exercise_base}&format=json&is_main=True`);
+              const id=ir.ok?await ir.json():{results:[]};
+              return{id:ex.exercise_base,name:ex.name||'Exercise',gifUrl:id.results?.[0]?.image||null,target:muscleId,equipment:''};
+            }catch{return{id:ex.exercise_base,name:ex.name||'Exercise',gifUrl:null,target:muscleId,equipment:''};}
+          }));
+        }
+      } catch(e){ console.log('wger error:',e); }
     }
+
+    if(!exs.length) throw new Error('No exercises found');
     libCache[muscleId]=exs;
     renderLib(exs);
-  } catch(e){grid.innerHTML='<div class="lib-empty">Error cargando.<br>Verificá conexión.</div>';}
+  } catch(e){
+    console.error('Library load error:',e);
+    grid.innerHTML='<div class="lib-empty" style="grid-column:1/-1">😅 Error cargando ejercicios.<br><br><small style="color:var(--muted)">'+e.message+'</small></div>';
+  }
 }
 function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
