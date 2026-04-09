@@ -84,7 +84,9 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .gif-modal-inner{background:var(--dark);border:1px solid var(--border);border-radius:20px 20px 0 0;width:100%;max-width:500px;padding-bottom:var(--safe-bottom);animation:sheetUp .3s ease;max-height:92vh;overflow-y:auto}
 @keyframes sheetUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
 .gif-modal-handle{width:36px;height:4px;background:var(--border);border-radius:2px;margin:14px auto 0}
-#gifModalImg{width:100%;display:block;max-height:300px;object-fit:contain;background:var(--card)}
+#gifModalImg{width:100%;display:block;max-height:300px;object-fit:contain;background:var(--card);min-height:200px}
+#gifModalImg[src=""]{display:none}
+.gif-modal-img-placeholder{width:100%;height:200px;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:48px}
 .gif-modal-info{padding:16px}
 .gif-modal-name{font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:1px;margin-bottom:8px;text-transform:capitalize}
 .gif-modal-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
@@ -608,15 +610,36 @@ async function fetchOneExercise(name) {
 }
 
 function openGifModal(ex) {
-  document.getElementById('gifModalImg').src=ex.gifUrl||'';
-  document.getElementById('gifModalName').textContent=ex.name;
-  const tags=document.getElementById('gifModalTags'); tags.innerHTML='';
-  if(ex.target) tags.innerHTML+=`<span class="gif-tag muscle">${ex.target}</span>`;
-  if(ex.equipment) tags.innerHTML+=`<span class="gif-tag equip">${ex.equipment}</span>`;
-  (ex.secondaryMuscles||[]).forEach(m=>tags.innerHTML+=`<span class="gif-tag equip">${m}</span>`);
-  document.getElementById('gifModal').classList.add('open');
+  const img = document.getElementById('gifModalImg');
+  const name = document.getElementById('gifModalName');
+  const tags = document.getElementById('gifModalTags');
+  const modal = document.getElementById('gifModal');
+
+  // Reset first
+  img.style.display = 'none';
+  img.src = '';
+  name.textContent = ex.name;
+  tags.innerHTML = '';
+
+  if (ex.target) tags.innerHTML += `<span class="gif-tag muscle">${ex.target}</span>`;
+  if (ex.equipment) tags.innerHTML += `<span class="gif-tag equip">${ex.equipment}</span>`;
+  (ex.secondaryMuscles||[]).slice(0,3).forEach(m => tags.innerHTML += `<span class="gif-tag equip">${m}</span>`);
+
+  if (ex.gifUrl) {
+    img.style.display = 'block';
+    // Use a fresh image element to avoid caching issues
+    const tempImg = new Image();
+    tempImg.crossOrigin = 'anonymous';
+    tempImg.onload = () => { img.src = ex.gifUrl; img.style.display = 'block'; };
+    tempImg.onerror = () => { img.style.display = 'none'; };
+    tempImg.src = ex.gifUrl;
+    // Set directly too as fallback
+    img.src = ex.gifUrl;
+  }
+
+  modal.classList.add('open');
 }
-function closeGifModal(){document.getElementById('gifModal').classList.remove('open');document.getElementById('gifModalImg').src='';}
+function closeGifModal(){document.getElementById('gifModal').classList.remove('open');setTimeout(()=>{document.getElementById('gifModalImg').src='';},300);}
 
 // ════════════════════════════════════════
 // EXERCISE LIBRARY
@@ -674,12 +697,25 @@ function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
   if(!exs.length){grid.innerHTML='<div class="lib-empty">Sin ejercicios encontrados</div>';return;}
   grid.innerHTML=exs.map(ex=>{
-    const modal=JSON.stringify({name:ex.name,gifUrl:ex.gifUrl||null,target:ex.target||ex.bodyPart||'',equipment:ex.equipment||'',secondaryMuscles:ex.secondaryMuscles||[]});
-    return `<div class="lib-card" onclick='openGifModal(${modal})'>
-      ${ex.gifUrl?`<img class="lib-img" src="${ex.gifUrl}" alt="${ex.name}" loading="lazy">`:`<div class="lib-placeholder">💪</div>`}
+    const safeName = (ex.name||'Exercise').replace(/'/g,"&apos;").replace(/"/g,"&quot;");
+    const safeEx = {
+      name: ex.name||'Exercise',
+      gifUrl: ex.gifUrl||ex.images?.[0]||null,
+      target: ex.target||ex.bodyPart||'',
+      equipment: ex.equipment||'',
+      secondaryMuscles: ex.secondaryMuscles||[]
+    };
+    const modalData = JSON.stringify(safeEx).replace(/'/g,"\\'");
+    const imgUrl = safeEx.gifUrl;
+    return `<div class="lib-card" onclick='openGifModal(JSON.parse(this.dataset.ex))' data-ex='${JSON.stringify(safeEx).replace(/'/g,"&#39;")}'>
+      ${imgUrl
+        ? `<img class="lib-img" src="${imgUrl}" alt="${safeName}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
+        : ''
+      }
+      <div class="lib-placeholder" style="${imgUrl?'display:none':''}">💪</div>
       <div class="lib-info">
-        <div class="lib-name">${ex.name}</div>
-        ${ex.target||ex.bodyPart?`<div class="lib-muscle">${ex.target||ex.bodyPart}</div>`:''}
+        <div class="lib-name">${ex.name||'Exercise'}</div>
+        ${safeEx.target?`<div class="lib-muscle">${safeEx.target}</div>`:''}
       </div>
     </div>`;
   }).join('');
