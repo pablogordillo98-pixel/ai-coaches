@@ -588,22 +588,26 @@ async function fetchGifs(names) {
 }
 
 async function fetchOneExercise(name) {
-  const hasKey = RAPIDAPI_KEY && RAPIDAPI_KEY.length > 10;
+  // Try ExerciseDB first
   try {
-    if(hasKey) {
-      const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(name.toLowerCase().trim())}?limit=1&offset=0`,
-        {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
-      if(r.ok){const d=await r.json();if(d?.[0])return{name:d[0].name,gifUrl:d[0].gifUrl,target:d[0].target,equipment:d[0].equipment,secondaryMuscles:d[0].secondaryMuscles||[]};}
-    }
-  } catch(e){ console.log('ExerciseDB fetchOne error:',e); }
-  // Fallback: wger
+    const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(name.toLowerCase().trim())}?limit=1&offset=0`,
+      {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
+    if(r.ok){const d=await r.json();if(d?.[0])return{name:d[0].name,gifUrl:d[0].gifUrl,target:d[0].target,equipment:d[0].equipment,secondaryMuscles:d[0].secondaryMuscles||[]};}
+  } catch(e){}
+  // Fallback: wger exerciseinfo (has images inline)
   try {
-    const wr=await fetch(`https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(name)}&language=english&format=json`);
-    if(wr.ok){
-      const wd=await wr.json(); const s=wd.suggestions?.[0];
-      if(s?.data?.id){
-        const ir=await fetch(`https://wger.de/api/v2/exerciseimage/?exercise_base=${s.data.id}&format=json`);
-        if(ir.ok){const id=await ir.json();if(id.results?.[0])return{name:s.value||name,gifUrl:id.results[0].image,target:s.data?.category?.name||'',equipment:'',secondaryMuscles:[]};}
+    const sr=await fetch(`https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(name)}&language=english&format=json`);
+    if(sr.ok){
+      const sd=await sr.json();
+      const baseId=sd.suggestions?.[0]?.data?.id;
+      if(baseId){
+        const ir=await fetch(`https://wger.de/api/v2/exerciseinfo/${baseId}/?format=json`);
+        if(ir.ok){
+          const info=await ir.json();
+          const img=info.images?.find(i=>i.is_main)||info.images?.[0];
+          const trans=info.translations?.find(t=>t.language===2);
+          return{name:trans?.name||name,gifUrl:img?.image||null,target:info.category?.name||'',equipment:info.equipment?.[0]?.name||'',secondaryMuscles:[]};
+        }
       }
     }
   } catch(e){}
@@ -659,48 +663,55 @@ async function loadLibrary(muscleId) {
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
   try {
     let exs=[];
-    // ExerciseDB via RapidAPI — returns CDN gif URLs that work cross-origin
+
+    // Try ExerciseDB RapidAPI
     try {
       const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=50&offset=0`,
         {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
       if(r.ok){
         const d=await r.json();
         if(Array.isArray(d)&&d.length){
+          // ExerciseDB gifUrls are like: https://v2.exercisedb.io/image/...
+          // These support cross-origin — use them directly
           exs=d.map(e=>({
             name:e.name,
-            gifUrl:e.gifUrl, // these are hosted on exercisedb CDN, work fine as img src
+            gifUrl:e.gifUrl||null,
             target:e.target,
             equipment:e.equipment,
             secondaryMuscles:e.secondaryMuscles||[]
           }));
         }
       }
-    } catch(e){ console.log('ExerciseDB error:',e.message); }
+    } catch(e){ console.log('ExerciseDB err:',e.message); }
 
-    // Fallback: wger (free, no key, static images not GIFs but work fine)
+    // Fallback: wger with correct image endpoint
     if(!exs.length){
       const catMap={chest:10,back:12,shoulders:13,'upper arms':8,'lower arms':11,'upper legs':9,'lower legs':14,waist:10,cardio:15};
+      const cat=catMap[muscleId]||10;
       try {
-        const r=await fetch(`https://wger.de/api/v2/exercise/?format=json&language=2&category=${catMap[muscleId]||10}&limit=40&offset=0`);
+        // Get exercises with images in one call using exerciseinfo endpoint
+        const r=await fetch(`https://wger.de/api/v2/exerciseinfo/?format=json&language=2&category=${cat}&limit=30&offset=0`);
         if(r.ok){
           const d=await r.json();
-          const batch=d.results.filter(e=>e.name).slice(0,20);
-          exs=await Promise.all(batch.map(async ex=>{
-            try{
-              const ir=await fetch(`https://wger.de/api/v2/exerciseimage/?exercise_base=${ex.exercise_base}&format=json`);
-              const id=ir.ok?await ir.json():{results:[]};
-              // wger images are full URLs like https://wger.de/media/...
-              const img=id.results?.find(i=>i.is_main)||id.results?.[0];
-              return{name:ex.name,gifUrl:img?.image||null,target:muscleId,equipment:'',secondaryMuscles:[]};
-            }catch{return{name:ex.name,gifUrl:null,target:muscleId,equipment:'',secondaryMuscles:[]};}
-          }));
-          // Filter out exercises with no name
-          exs=exs.filter(e=>e.name&&e.name.length>1);
+          exs=d.results
+            .filter(e=>e.translations?.find(t=>t.language===2&&t.name))
+            .map(e=>{
+              const trans=e.translations.find(t=>t.language===2);
+              const img=e.images?.find(i=>i.is_main)||e.images?.[0];
+              return{
+                name:trans?.name||e.name||'Exercise',
+                gifUrl:img?.image||null,
+                target:e.category?.name||muscleId,
+                equipment:e.equipment?.[0]?.name||'',
+                secondaryMuscles:[]
+              };
+            })
+            .filter(e=>e.name&&e.name.length>2);
         }
-      } catch(e){ console.log('wger error:',e.message); }
+      } catch(e){ console.log('wger err:',e.message); }
     }
 
-    if(!exs.length) throw new Error('Sin ejercicios — verificá conexión');
+    if(!exs.length) throw new Error('Sin ejercicios encontrados');
     libCache[muscleId]=exs;
     renderLib(exs);
   } catch(e){
