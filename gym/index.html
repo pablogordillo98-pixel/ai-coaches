@@ -158,12 +158,13 @@ header{display:flex;align-items:center;justify-content:space-between;padding:12p
 .muscle-tab.active{background:rgba(200,255,0,.1);border-color:rgba(200,255,0,.4);color:var(--accent)}
 .library-grid{flex:1;overflow-y:auto;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px;align-content:start;-webkit-overflow-scrolling:touch}
 .library-grid::-webkit-scrollbar{display:none}
-.lib-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .2s}
+.lib-card{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden;cursor:pointer;transition:border-color .2s;display:flex;flex-direction:column}
 .lib-card:active{border-color:rgba(200,255,0,.5)}
-.lib-img{width:100%;aspect-ratio:1;object-fit:cover;background:var(--dark);display:block}
-.lib-placeholder{width:100%;aspect-ratio:1;background:var(--dark);display:flex;align-items:center;justify-content:center;font-size:28px;border-bottom:1px solid var(--border)}
-.lib-info{padding:9px}
-.lib-name{font-size:12px;font-weight:500;color:var(--text);text-transform:capitalize;margin-bottom:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.3}
+.lib-img-wrap{width:100%;aspect-ratio:1;background:var(--dark);overflow:hidden;position:relative;border-bottom:1px solid var(--border)}
+.lib-img{width:100%;height:100%;object-fit:cover;display:block}
+.lib-placeholder{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:36px;background:var(--dark)}
+.lib-info{padding:8px 10px;flex:1}
+.lib-name{font-size:11px;font-weight:500;color:var(--text);text-transform:capitalize;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.4;margin-bottom:2px}
 .lib-muscle{font-family:'DM Mono',monospace;font-size:9px;color:var(--accent);letter-spacing:1px;text-transform:uppercase}
 .lib-loading{grid-column:1/-1;text-align:center;padding:40px 20px;font-family:'DM Mono',monospace;font-size:11px;color:var(--muted);letter-spacing:1px;animation:pulse 1s infinite}
 .lib-empty{grid-column:1/-1;text-align:center;padding:40px 20px;color:var(--muted);font-size:13px}
@@ -658,63 +659,67 @@ async function loadLibrary(muscleId) {
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
   try {
     let exs=[];
-    // ExerciseDB via RapidAPI
+    // ExerciseDB via RapidAPI — returns CDN gif URLs that work cross-origin
     try {
       const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=50&offset=0`,
         {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
-      if(r.ok){const d=await r.json();if(Array.isArray(d)&&d.length)exs=d;}
-    } catch(e){ console.log('ExerciseDB error:',e); }
+      if(r.ok){
+        const d=await r.json();
+        if(Array.isArray(d)&&d.length){
+          exs=d.map(e=>({
+            name:e.name,
+            gifUrl:e.gifUrl, // these are hosted on exercisedb CDN, work fine as img src
+            target:e.target,
+            equipment:e.equipment,
+            secondaryMuscles:e.secondaryMuscles||[]
+          }));
+        }
+      }
+    } catch(e){ console.log('ExerciseDB error:',e.message); }
 
-    // Fallback: wger REST API
+    // Fallback: wger (free, no key, static images not GIFs but work fine)
     if(!exs.length){
       const catMap={chest:10,back:12,shoulders:13,'upper arms':8,'lower arms':11,'upper legs':9,'lower legs':14,waist:10,cardio:15};
       try {
         const r=await fetch(`https://wger.de/api/v2/exercise/?format=json&language=2&category=${catMap[muscleId]||10}&limit=40&offset=0`);
         if(r.ok){
           const d=await r.json();
-          // Fetch images in parallel (batched)
-          const batch=d.results.slice(0,20);
+          const batch=d.results.filter(e=>e.name).slice(0,20);
           exs=await Promise.all(batch.map(async ex=>{
             try{
-              const ir=await fetch(`https://wger.de/api/v2/exerciseimage/?exercise_base=${ex.exercise_base}&format=json&is_main=True`);
+              const ir=await fetch(`https://wger.de/api/v2/exerciseimage/?exercise_base=${ex.exercise_base}&format=json`);
               const id=ir.ok?await ir.json():{results:[]};
-              return{id:ex.exercise_base,name:ex.name||'Exercise',gifUrl:id.results?.[0]?.image||null,target:muscleId,equipment:''};
-            }catch{return{id:ex.exercise_base,name:ex.name||'Exercise',gifUrl:null,target:muscleId,equipment:''};}
+              // wger images are full URLs like https://wger.de/media/...
+              const img=id.results?.find(i=>i.is_main)||id.results?.[0];
+              return{name:ex.name,gifUrl:img?.image||null,target:muscleId,equipment:'',secondaryMuscles:[]};
+            }catch{return{name:ex.name,gifUrl:null,target:muscleId,equipment:'',secondaryMuscles:[]};}
           }));
+          // Filter out exercises with no name
+          exs=exs.filter(e=>e.name&&e.name.length>1);
         }
-      } catch(e){ console.log('wger error:',e); }
+      } catch(e){ console.log('wger error:',e.message); }
     }
 
-    if(!exs.length) throw new Error('No exercises found');
+    if(!exs.length) throw new Error('Sin ejercicios — verificá conexión');
     libCache[muscleId]=exs;
     renderLib(exs);
   } catch(e){
-    console.error('Library load error:',e);
-    grid.innerHTML='<div class="lib-empty" style="grid-column:1/-1">😅 Error cargando ejercicios.<br><br><small style="color:var(--muted)">'+e.message+'</small></div>';
+    grid.innerHTML=`<div class="lib-empty" style="grid-column:1/-1">😅 ${e.message}</div>`;
   }
 }
 function renderLib(exs) {
   const grid=document.getElementById('libraryGrid');
   if(!exs.length){grid.innerHTML='<div class="lib-empty">Sin ejercicios encontrados</div>';return;}
   grid.innerHTML=exs.map(ex=>{
-    const safeName = (ex.name||'Exercise').replace(/'/g,"&apos;").replace(/"/g,"&quot;");
-    const safeEx = {
-      name: ex.name||'Exercise',
-      gifUrl: ex.gifUrl||ex.images?.[0]||null,
-      target: ex.target||ex.bodyPart||'',
-      equipment: ex.equipment||'',
-      secondaryMuscles: ex.secondaryMuscles||[]
-    };
-    const modalData = JSON.stringify(safeEx).replace(/'/g,"\\'");
-    const imgUrl = safeEx.gifUrl;
-    return `<div class="lib-card" onclick='openGifModal(JSON.parse(this.dataset.ex))' data-ex='${JSON.stringify(safeEx).replace(/'/g,"&#39;")}'>
-      ${imgUrl
-        ? `<img class="lib-img" src="${imgUrl}" alt="${safeName}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
-        : ''
-      }
-      <div class="lib-placeholder" style="${imgUrl?'display:none':''}">💪</div>
+    const safeEx={name:ex.name||'Exercise',gifUrl:ex.gifUrl||null,target:ex.target||ex.bodyPart||'',equipment:ex.equipment||'',secondaryMuscles:ex.secondaryMuscles||[]};
+    const dataAttr=JSON.stringify(safeEx).replace(/"/g,'&quot;');
+    return `<div class="lib-card" onclick="openGifModal(JSON.parse(this.getAttribute('data-ex')))" data-ex="${dataAttr}">
+      <div class="lib-img-wrap">
+        ${safeEx.gifUrl?`<img class="lib-img" src="${safeEx.gifUrl}" alt="" loading="lazy" onerror="this.style.display='none';this.parentElement.querySelector('.lib-placeholder').style.display='flex'">`:'' }
+        <div class="lib-placeholder" style="${safeEx.gifUrl?'display:none':'display:flex'}">💪</div>
+      </div>
       <div class="lib-info">
-        <div class="lib-name">${ex.name||'Exercise'}</div>
+        <div class="lib-name">${safeEx.name}</div>
         ${safeEx.target?`<div class="lib-muscle">${safeEx.target}</div>`:''}
       </div>
     </div>`;
