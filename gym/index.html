@@ -613,28 +613,10 @@ async function fetchGifs(names) {
 }
 
 async function fetchOneExercise(name) {
-  // Try ExerciseDB first
+  // Use our Vercel proxy — no CORS
   try {
-    const r=await fetch(`https://exercisedb.p.rapidapi.com/exercises/name/${encodeURIComponent(name.toLowerCase().trim())}?limit=1&offset=0`,
-      {method:'GET',headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}});
-    if(r.ok){const d=await r.json();if(d?.[0])return{name:d[0].name,gifUrl:d[0].gifUrl,target:d[0].target,equipment:d[0].equipment,secondaryMuscles:d[0].secondaryMuscles||[]};}
-  } catch(e){}
-  // Fallback: wger exerciseinfo (has images inline)
-  try {
-    const sr=await fetch(`https://wger.de/api/v2/exercise/search/?term=${encodeURIComponent(name)}&language=english&format=json`);
-    if(sr.ok){
-      const sd=await sr.json();
-      const baseId=sd.suggestions?.[0]?.data?.id;
-      if(baseId){
-        const ir=await fetch(`https://wger.de/api/v2/exerciseinfo/${baseId}/?format=json`);
-        if(ir.ok){
-          const info=await ir.json();
-          const img=info.images?.find(i=>i.is_main)||info.images?.[0];
-          const trans=info.translations?.find(t=>t.language===2);
-          return{name:trans?.name||name,gifUrl:img?.image||null,target:info.category?.name||'',equipment:info.equipment?.[0]?.name||'',secondaryMuscles:[]};
-        }
-      }
-    }
+    const r=await fetch(`https://ai-coaches-coral.vercel.app/api/exercises?name=${encodeURIComponent(name.toLowerCase().trim())}`);
+    if(r.ok){const d=await r.json();if(d?.[0])return{name:d[0].name,gifUrl:d[0].gifUrl,target:d[0].target,equipment:d[0].equipment,secondaryMuscles:d[0].secondaryMuscles||[],instructions:d[0].instructions||[]};}
   } catch(e){}
   return null;
 }
@@ -672,18 +654,15 @@ async function loadLibrary(muscleId) {
   grid.innerHTML='<div class="lib-loading">CARGANDO...</div>';
 
   try {
-    // RapidAPI call works fine from browser — the CORS issue was only with the image URLs
-    const r=await fetch(
-      `https://exercisedb.p.rapidapi.com/exercises/bodyPart/${encodeURIComponent(muscleId)}?limit=40&offset=0`,
-      {method:'GET', headers:{'x-rapidapi-key':RAPIDAPI_KEY,'x-rapidapi-host':'exercisedb.p.rapidapi.com'}}
-    );
-    if(!r.ok) throw new Error(`${r.status}`);
+    // Use our own Vercel proxy — no CORS issues
+    const r=await fetch(`https://ai-coaches-coral.vercel.app/api/exercises?bodyPart=${encodeURIComponent(muscleId)}&limit=40`);
+    if(!r.ok) throw new Error(`proxy ${r.status}`);
     const data=await r.json();
     if(!Array.isArray(data)||!data.length) throw new Error('empty');
 
     const exs=data.map(e=>({
       name: e.name,
-      gifUrl: e.gifUrl||null, // store URL but load via fetch blob
+      gifUrl: e.gifUrl||null,
       target: e.target||muscleId,
       equipment: e.equipment||'',
       secondaryMuscles: e.secondaryMuscles||[],
@@ -691,10 +670,8 @@ async function loadLibrary(muscleId) {
     }));
     libCache[muscleId]=exs;
     renderLib(exs);
-    // After rendering, load GIFs via fetch to bypass image CORS
-    loadGifsViaBlobUrls(exs);
   } catch(e) {
-    console.log('RapidAPI err, using fallback:', e.message);
+    console.log('Proxy err, using fallback:', e.message);
     const fallback=getFallbackExercises(muscleId);
     libCache[muscleId]=fallback;
     renderLib(fallback);
